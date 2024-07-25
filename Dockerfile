@@ -17,3 +17,5 @@ COPY spotify-etl.py .
 # Run the script when the container launches
 # CMD ["python", "spotify-etl.py"]
 
+# Running with -dit to detatch and run script manually in docker terminal for now
+
