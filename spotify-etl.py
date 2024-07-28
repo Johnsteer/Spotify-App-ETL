@@ -32,6 +32,7 @@ async def get_spotify_token():
             scope=SCOPE
         )
         token_info = sp_oauth.refresh_access_token(REFRESH_TOKEN)
+        logger.info(f"Access token retrieved successfuly.")
         return token_info['access_token']
     except Exception as e:
         logger.error(f"Failed to get Spotify token: {str(e)}")
@@ -159,12 +160,14 @@ async def main():
                 get_recent_tracks(session, headers),
                 get_followed_artists(session, headers)
             )
+            logger.info("Executed 1st gather.")
             # Get list of playlist id's to request their tracks
             playlist_ids = playlists_df['id'].tolist()
             # Calling get_playlists_tracks() here doesn't actually execute it but returns coroutines to be gathered
             playlist_tracks_tasks = [get_playlist_tracks(session, headers, playlist_id) for playlist_id in playlist_ids]
             # Await gathered coroutines
             playlist_tracks_results = await asyncio.gather(*playlist_tracks_tasks)
+            logger.info("Executed 2nd gather.")
             # Iterate through results and create DataFrame
             pt_df = pd.DataFrame([item for sublist in playlist_tracks_results for item in sublist])
 
