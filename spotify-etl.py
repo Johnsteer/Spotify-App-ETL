@@ -40,8 +40,9 @@ async def get_spotify_token():
 
 # Asyncio semaphore to cap number of concurrent tasks at 5
 # Rate limited for frequent requests
-semaphore = asyncio.Semaphore(5)
+
 async def rate_limited_request(session, url, headers):
+    semaphore = asyncio.Semaphore(5)
     async with semaphore:
         response = await session.get(url, headers=headers)
         # Checks for 'TooManyRequests' error
@@ -69,8 +70,7 @@ async def get_playlists(session, headers):
             data = await fetch(session, url, headers)
             playlists_data.extend(data['items'])
             url = data.get('next')
-        
-        return pd.DataFrame([{
+        r = pd.DataFrame([{
             'id': playlist['id'],
             'href': playlist['href'],
             'name': playlist['name'],
@@ -79,6 +79,8 @@ async def get_playlists(session, headers):
             'collaborative': playlist['collaborative'],
             'tracks': playlist['tracks']['total']
         } for playlist in playlists_data])
+        logger.info("Success fetching playlists")
+        return r
     except Exception as e:
         logger.error(f"Error fetching playlists: {str(e)}")
         raise
@@ -92,14 +94,15 @@ async def get_playlist_tracks(session, headers, playlist_id):
             data = await rate_limited_request(session, url, headers)
             tracks_data.extend(data['items'])
             url = data.get('next')
-        
-        return [{
+        r = [{
             'id': track['track']['id'],
             'name': track['track']['name'],
             'artist': track['track']['artists'][0]['name'],
             'album': track['track']['album']['name'],
             'playlist_id': playlist_id
         } for track in tracks_data if track['track']]
+        logger.info(f"Success fetching tracks for playlist {playlist_id}")
+        return r
     except Exception as e:
         logger.warning(f"Error fetching tracks for playlist {playlist_id}: {str(e)}")
         return []
@@ -112,14 +115,15 @@ async def get_saved_tracks(session, headers):
             data = await rate_limited_request(session, url, headers)
             saved_tracks_data.extend(data['items'])
             url = data.get('next')
-        
-        return pd.DataFrame([{
+        r = pd.DataFrame([{
             'id': item['track']['id'],
             'name': item['track']['name'],
             'artist': item['track']['artists'][0]['name'],
             'album': item['track']['album']['name'],
             'added_at': item['added_at']
         } for item in saved_tracks_data])
+        logger.info("Success fetching saved tracks")
+        return r
     except Exception as e:
         logger.error(f"Error fetching saved tracks: {str(e)}")
         raise
@@ -130,9 +134,11 @@ async def get_audio_features(session, headers, track_ids):
         # Spotify allows up to 100 tracks per request
         for i in range(0, len(track_ids), 100):  
             batch = track_ids[i:i+100]
+            batch = [x for x in batch if x != None]
             url = f"{BASE_URL}/audio-features?ids={','.join(batch)}"
             data = await rate_limited_request(session, url, headers)
             audio_features.extend(data['audio_features'])
+        logger.info("Success fetching audio features")
         return pd.DataFrame(audio_features)
     except Exception as e:
         logger.error(f"Error fetching audio features: {str(e)}")
@@ -142,13 +148,15 @@ async def get_recent_tracks(session, headers):
     try:
         url = f"{BASE_URL}/me/player/recently-played"
         data = await fetch(session, url, headers)
-        return pd.DataFrame([{
+        r = pd.DataFrame([{
             'id': item['track']['id'],
             'name': item['track']['name'],
             'artist': item['track']['artists'][0]['name'],
             'album': item['track']['album']['name'],
             'played_at': item['played_at']
         } for item in data['items']])
+        logger.info("Success fetching recent tracks")
+        return r
     except Exception as e:
         logger.error(f"Error fetching recent tracks: {str(e)}")
         raise
@@ -160,6 +168,7 @@ async def get_top_items(session, headers, item_type):
             url = f"{BASE_URL}/me/top/{item_type}?time_range={time_range}"
             data = await rate_limited_request(session, url, headers)
             top_items[time_range] = pd.DataFrame(data['items'])
+        logger.info("Success fetching top items")
         return top_items
     except Exception as e:
         logger.error(f"Error fetching top items: {str(e)}")
@@ -169,13 +178,15 @@ async def get_followed_artists(session, headers):
     try:
         url = f"{BASE_URL}/me/following?type=artist"
         data = await fetch(session, url, headers)
-        return pd.DataFrame([{
+        r = pd.DataFrame([{
             'id': artist['id'],
             'name': artist['name'],
             'genres': ', '.join(artist['genres']),
             'popularity': artist['popularity'],
             'followers': artist['followers']['total']
         } for artist in data['artists']['items']])
+        logger.info("Success fetching followed artists")
+        return r
     except Exception as e:
         logger.error(f"Error fetching followed artists: {str(e)}")
         raise
@@ -212,7 +223,8 @@ async def main():
             # Get list of playlist id's to request their tracks
             playlist_ids = playlists_df['id'].tolist()
             # asyncio.gather() will execute the unpacked list of the coroutine function called for every playlist id
-            playlist_tracks_results = await asyncio.gather(*[get_playlist_tracks(session, headers, playlist_id) for playlist_id in playlist_ids])
+            tasks = [get_playlist_tracks(session, headers, pid) for pid in playlist_ids]
+            playlist_tracks_results = await asyncio.gather(*tasks)
             # Create DataFrame
             playlists_tracks_df = pd.DataFrame([item for sublist in playlist_tracks_results for item in sublist])
 
@@ -222,6 +234,7 @@ async def main():
             # Although technically Spotify mobile shows your liked tracks as a playlist and it has playlist functionality
             # it is not retrivable via the playlist endpoint
             all_track_ids = list(set(playlists_tracks_df['id'].tolist() + saved_tracks_df['id'].tolist()))
+            all_track_ids = [x for x in all_track_ids if x != None]
             audio_features_df = await get_audio_features(session, headers, all_track_ids)
 
             top_artists_df = await get_top_items(session, headers, 'artists')
