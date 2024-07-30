@@ -11,6 +11,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the Python scripts into the container
+COPY generate_token.py .
 COPY credentials.py .
 COPY spotify-etl.py .
 
