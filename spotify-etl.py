@@ -1,4 +1,5 @@
 import asyncio
+import math
 import time
 import os
 import pandas as pd
@@ -7,7 +8,7 @@ from spotipy.oauth2 import SpotifyOAuth
 from sqlalchemy import create_engine
 from datetime import datetime
 import logging
-from credentials import USER, PASSWORD, CLIENT_ID, CLIENT_SECRET, ACCESS_TOKEN, REFRESH_TOKEN
+from credentials import USER, PASSWORD, DB_HOST, DB_PORT, CLIENT_ID, CLIENT_SECRET, ACCESS_TOKEN, REFRESH_TOKEN
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -16,11 +17,13 @@ logger = logging.getLogger(__name__)
 # Constants
 USER = USER
 PASSWORD = PASSWORD
+DB_HOST = DB_HOST
+DB_PORT = DB_PORT
 SPOTIPY_CLIENT_ID = CLIENT_ID
 SPOTIPY_CLIENT_SECRET = CLIENT_SECRET
 SPOTIPY_REDIRECT_URI = 'http://localhost:3000/'
 SCOPE = 'user-top-read user-read-private user-read-email playlist-read-private user-library-read user-read-recently-played user-follow-read'
-DB_CONNECTION_STRING = f'postgresql://{USER}:{PASSWORD}@steer-postgres-nyc-do-user-17259900-0.e.db.ondigitalocean.com:25060/defaultdb?sslmode=require'
+DB_CONNECTION_STRING = f'postgresql://{USER}:{PASSWORD}@{DB_HOST}:{DB_PORT}/defaultdb?sslmode=require'
 BASE_URL = 'https://api.spotify.com/v1'
 
 async def get_spotify_token():
@@ -101,7 +104,7 @@ async def get_playlist_tracks(session, headers, playlist_id):
             'album': track['track']['album']['name'],
             'playlist_id': playlist_id
         } for track in tracks_data if track['track']]
-        logger.info(f"Success fetching tracks for playlist {playlist_id}")
+        # logger.info(f"Success fetching tracks for playlist {playlist_id}")
         return r
     except Exception as e:
         logger.warning(f"Error fetching tracks for playlist {playlist_id}: {str(e)}")
@@ -132,17 +135,42 @@ async def get_audio_features(session, headers, track_ids):
     try:
         audio_features = []
         # Spotify allows up to 100 tracks per request
+        """
         for i in range(0, len(track_ids), 100):  
             batch = track_ids[i:i+100]
             batch = [x for x in batch if x != None]
             url = f"{BASE_URL}/audio-features?ids={','.join(batch)}"
             data = await rate_limited_request(session, url, headers)
+            if data is None or 'audio_features' not in data:
+                logger.info(f"Audio Features - unexpected response format for batch {i} - {i+99}: {data}")    
+            else:
+                audio_features.extend(data['audio_features'])
+            #logger.info(f"Audio Features - success fetching batch {i} - {i+99}")
+        """
+        
+        if len(track_ids) % 100 == 0:
+            for i in range(0, len(track_ids), 100):
+                batch = track_ids[i:i+100]
+                url = f"{BASE_URL}/audio-features?ids={','.join(batch)}"
+                data = await rate_limited_request(session, url, headers)
+                audio_features.extend(data['audio_features'])
+        else:
+            for i in range(0, math.floor(len(track_ids)/100) * 100, 100):
+                batch = track_ids[i:i+100]
+                url = f"{BASE_URL}/audio-features?ids={','.join(batch)}"
+                data = await rate_limited_request(session, url, headers)
+                audio_features.extend(data['audio_features'])
+            batch = track_ids[math.floor(len(track_ids)/100) * 100:]
+            url = f"{BASE_URL}/audio-features?ids={','.join(batch)}"
+            data = await rate_limited_request(session, url, headers)
             audio_features.extend(data['audio_features'])
-        logger.info("Success fetching audio features")
-        return pd.DataFrame(audio_features)
+        audio_features = [x for x in audio_features if x != None]
+        logger.info(f"Success fetching audio features for {len(audio_features)} tracks")
+        r = pd.DataFrame(audio_features)
+        return r
     except Exception as e:
         logger.error(f"Error fetching audio features: {str(e)}")
-        raise      
+        raise
 
 async def get_recent_tracks(session, headers):
     try:
@@ -159,19 +187,6 @@ async def get_recent_tracks(session, headers):
         return r
     except Exception as e:
         logger.error(f"Error fetching recent tracks: {str(e)}")
-        raise
-
-async def get_top_items(session, headers, item_type):
-    try:
-        top_items = {}
-        for time_range in ['short_term', 'medium_term', 'long_term']:
-            url = f"{BASE_URL}/me/top/{item_type}?time_range={time_range}"
-            data = await rate_limited_request(session, url, headers)
-            top_items[time_range] = pd.DataFrame(data['items'])
-        logger.info("Success fetching top items")
-        return top_items
-    except Exception as e:
-        logger.error(f"Error fetching top items: {str(e)}")
         raise
 
 async def get_followed_artists(session, headers):
@@ -193,7 +208,7 @@ async def get_followed_artists(session, headers):
 
 def write_to_database(df, table_name, engine):
     try:
-        df.astype(str).to_sql(table_name, engine, if_exists='append', index=False)
+        df.astype(str).to_sql(table_name, engine, if_exists='replace', index=False)
         logger.info(f"Successfully wrote data to {table_name}")
     except Exception as e:
         logger.error(f"Error writing to {table_name}: {str(e)}")
@@ -212,8 +227,7 @@ async def main():
         async with aiohttp.ClientSession() as session:
             # Awaiting gather() will run all coroutine functions and store results in an iterable to unpack
             # Fetch data that doesn't require iteration
-            user_profile_df, playlists_df, recent_tracks_df, followed_artists_df = await asyncio.gather(
-                rate_limited_request(session, f"{BASE_URL}/me", headers),
+            playlists_df, recent_tracks_df, followed_artists_df = await asyncio.gather(
                 get_playlists(session, headers),
                 get_recent_tracks(session, headers),
                 get_followed_artists(session, headers)
@@ -235,21 +249,16 @@ async def main():
             # it is not retrivable via the playlist endpoint
             all_track_ids = list(set(playlists_tracks_df['id'].tolist() + saved_tracks_df['id'].tolist()))
             all_track_ids = [x for x in all_track_ids if x != None]
+            logger.info(f"Length of all_track_ids: {len(all_track_ids)}")
             audio_features_df = await get_audio_features(session, headers, all_track_ids)
 
-            top_artists_df = await get_top_items(session, headers, 'artists')
-            top_tracks_df = await get_top_items(session, headers, 'tracks')
-
         dfs = [
-            user_profile_df,
             playlists_df, 
             playlists_tracks_df, 
             saved_tracks_df, 
             recent_tracks_df, 
             followed_artists_df,
-            audio_features_df,
-            top_artists_df,
-            top_tracks_df
+            audio_features_df
             ]
         
         for df in dfs:
@@ -261,15 +270,12 @@ async def main():
 
         # Write to database
         for df, table_name in zip(dfs, [
-            'user_profile',
             'playlists',
             'playlists_tracks',
             'saved_tracks',
             'recent_tracks',
             'followed_artists',
-            'audio_features',
-            'top_artists',
-            'top_tracks'
+            'audio_features'
             ]):
             write_to_database(df, table_name, engine)
         logger.info("ETL process completed successfully")
