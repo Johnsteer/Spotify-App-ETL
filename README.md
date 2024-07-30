@@ -7,7 +7,8 @@ This project is an ETL (Extract, Transform, Load) pipeline that extracts data fr
 The Spotify ETL project consists of two main Python scripts:
 
 1. `credentials.py`: Manages the secure storage and retrieval of sensitive information.
-2. `spotify-etl.py`: The main ETL script that interacts with the Spotify API and loads data into the database.
+2. `generate_token.py` : Used to generate Spotify Access and Refresh token. Only Refresh token is needed.
+3. `spotify-etl.py`: The main ETL script that interacts with the Spotify API and loads data into the database.
 
 The ETL process extracts the following data from Spotify:
 - User's playlists
