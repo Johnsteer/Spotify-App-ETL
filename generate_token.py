@@ -12,5 +12,4 @@ sp_oauth = SpotifyOAuth(client_id=CLIENT_ID,
 
 token_info = sp_oauth.get_access_token()
 
-print(f"Access Token: {token_info['access_token']}")
 print(f"Refresh Token: {token_info['refresh_token']}")

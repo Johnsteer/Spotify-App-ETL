@@ -8,7 +8,7 @@ from spotipy.oauth2 import SpotifyOAuth
 from sqlalchemy import create_engine
 from datetime import datetime
 import logging
-from credentials import USER, PASSWORD, DB_HOST, DB_PORT, CLIENT_ID, CLIENT_SECRET, ACCESS_TOKEN, REFRESH_TOKEN
+from credentials import USER, PASSWORD, DB_HOST, DB_PORT, CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
